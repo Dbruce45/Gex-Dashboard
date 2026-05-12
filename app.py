@@ -1,25 +1,23 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
+import plotly.graph_objects as go
 from io import StringIO
 
 st.set_page_config(page_title="My GEX Dashboard", layout="wide")
 st.title("🚀 My Personal GEX Dashboard")
-st.markdown("**Supports SPX + SPY + other tickers**")
+st.markdown("**Modern view • Call Wall + Put Wall • SPX + SPY + others**")
 
 ticker = st.text_input("Enter Ticker", value="SPX").upper().strip()
 
-st.caption(f"📥 CBOE Link → [Open {ticker} Page](https://www.cboe.com/delayed_quotes/{ticker.lower()}/quote_table/)")
+st.caption(f"📥 [CBOE {ticker} Page](https://www.cboe.com/delayed_quotes/{ticker.lower()}/quote_table/)")
 
 uploaded_file = st.file_uploader(f"Upload {ticker} CSV from CBOE", type=["csv"])
 
 if uploaded_file is not None:
-    # Read the entire file as text to find the correct header row
+    # Auto-detect header row (works for SPX + SPY + most others)
     content = uploaded_file.getvalue().decode("utf-8")
     lines = content.splitlines()
     
-    # Find the row that contains "Strike" (the real header)
     header_row = None
     for i, line in enumerate(lines):
         if "Strike" in line:
@@ -27,36 +25,27 @@ if uploaded_file is not None:
             break
     
     if header_row is None:
-        st.error("Could not find 'Strike' column. Make sure you downloaded the full options chain.")
+        st.error("Could not find the options table. Please download the full chain.")
         st.stop()
     
-    st.write(f"✅ Detected data table starting at row {header_row}")
-    
-    # Read the CSV starting from the correct header row
     uploaded_file.seek(0)
     df = pd.read_csv(uploaded_file, skiprows=header_row, on_bad_lines='skip')
-    
-    st.write("**Columns found:**", list(df.columns))
-    
-    # Standardize Strike column
+
+    # Standardize Strike
     strike_col = next((col for col in df.columns if 'strike' in str(col).lower()), None)
-    if not strike_col:
-        st.error("Could not find Strike column")
-        st.stop()
-    
     df = df.dropna(subset=[strike_col])
     df = df.rename(columns={strike_col: 'Strike'})
 
     current_price = st.number_input("Current Price", value=739.24, step=0.01)
 
-    # Robust column detection for Gamma and Open Interest
+    # Column detection
     call_gamma_col = next((col for col in df.columns if 'gamma' in str(col).lower() and ('call' in str(col).lower() or col == 'Gamma')), None)
     put_gamma_col = next((col for col in df.columns if 'gamma' in str(col).lower() and ('put' in str(col).lower() or col == 'Gamma.1')), None)
     call_oi_col = next((col for col in df.columns if 'open interest' in str(col).lower() and ('call' in str(col).lower() or col == 'Open Interest')), None)
     put_oi_col = next((col for col in df.columns if 'open interest' in str(col).lower() and ('put' in str(col).lower() or col == 'Open Interest.1')), None)
 
     if not call_gamma_col or not put_gamma_col:
-        st.error("Could not detect Gamma columns. Reply with the column list above.")
+        st.error("Could not detect Gamma columns.")
         st.stop()
 
     # Calculate GEX
@@ -65,8 +54,14 @@ if uploaded_file is not None:
 
     net_gex = (df['Call_GEX'].sum() + df['Put_GEX'].sum()) / 1_000_000_000
 
-    # Gamma Flip
+    # GEX by strike
     gex_by_strike = df.groupby('Strike')[['Call_GEX', 'Put_GEX']].sum().sum(axis=1)
+
+    # === NEW: Call Wall & Put Wall ===
+    call_wall = gex_by_strike[gex_by_strike > 0].idxmax() if any(gex_by_strike > 0) else None
+    put_wall = gex_by_strike[gex_by_strike < 0].idxmin() if any(gex_by_strike < 0) else None
+
+    # Gamma Flip
     sorted_gex = gex_by_strike.sort_index()
     sign_change = np.where(np.diff(np.sign(sorted_gex)))[0]
     if len(sign_change) > 0:
@@ -76,24 +71,49 @@ if uploaded_file is not None:
     else:
         gamma_flip = float(sorted_gex.idxmin() if sorted_gex.min() < 0 else sorted_gex.idxmax())
 
-    col1, col2, col3 = st.columns(3)
+    # Metrics
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Net GEX", f"${net_gex:,.2f}B", 
                 delta="Positive = Stabilizing" if net_gex > 0 else "Negative = Volatile")
-    col2.metric("Gamma Flip", f"{gamma_flip:.0f}")
-    col3.metric("Current Price", f"{current_price:.2f}")
+    col2.metric("Call Wall", f"{call_wall:.0f}" if call_wall else "N/A")
+    col3.metric("Put Wall", f"{put_wall:.0f}" if put_wall else "N/A")
+    col4.metric("Gamma Flip", f"{gamma_flip:.0f}")
 
-    fig = plt.figure(figsize=(14, 7))
-    colors = ['green' if x > 0 else 'red' for x in gex_by_strike.values]
-    plt.bar(gex_by_strike.index, gex_by_strike.values, width=8, color=colors, alpha=0.85)
-    plt.axvline(current_price, color='yellow', linewidth=3, label='Current Price')
-    plt.axvline(gamma_flip, color='white', linestyle='--', linewidth=2.5, label=f'Gamma Flip ({gamma_flip:.0f})')
-    plt.title(f'GEX Profile — {ticker} | Net GEX ${net_gex:,.2f}B')
-    plt.xlabel('Strike Price')
-    plt.ylabel('GEX ($ notional per 1% move)')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    st.pyplot(fig)
+    # === CLEANER PLOTLY CHART ===
+    fig = go.Figure()
 
-    st.success(f"✅ {ticker} loaded successfully!")
+    fig.add_trace(go.Bar(
+        x=gex_by_strike.index,
+        y=gex_by_strike.values,
+        marker_color=['green' if val > 0 else 'red' for val in gex_by_strike.values],
+        opacity=0.85,
+        name="GEX by Strike"
+    ))
+
+    fig.add_vline(x=current_price, line_dash="dash", line_color="yellow", 
+                  annotation_text="CURRENT PRICE", annotation_position="top right")
+    fig.add_vline(x=gamma_flip, line_dash="dot", line_color="white", 
+                  annotation_text=f"GAMMA FLIP ({gamma_flip:.0f})")
+
+    if call_wall:
+        fig.add_annotation(x=call_wall, y=gex_by_strike.max()*0.9, 
+                          text="CALL WALL", showarrow=True, arrowhead=2, arrowsize=1.5)
+    if put_wall:
+        fig.add_annotation(x=put_wall, y=gex_by_strike.min()*0.9, 
+                          text="PUT WALL", showarrow=True, arrowhead=2, arrowsize=1.5)
+
+    fig.update_layout(
+        title=f"GEX Profile — {ticker} | Net GEX ${net_gex:,.2f}B",
+        xaxis_title="Strike Price",
+        yaxis_title="GEX ($ notional per 1% move)",
+        template="plotly_dark",
+        height=650,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.success(f"✅ {ticker} GEX loaded successfully!")
 else:
-    st.info("Upload your CSV above")
+    st.info("Upload your CSV above to see Call Wall, Put Wall, and clean chart")

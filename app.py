@@ -5,72 +5,68 @@ import numpy as np
 
 st.set_page_config(page_title="My GEX Dashboard", layout="wide")
 st.title("🚀 My Personal GEX Dashboard")
-st.markdown("**Upload latest CSV for any ticker**")
+st.markdown("**Supports SPX + stocks/ETFs (SPY, QQQ, AAPL, TSLA, etc.)**")
 
-# Ticker input
-ticker = st.text_input("Enter Ticker (SPX, SPY, QQQ, AAPL, TSLA, etc.)", value="SPX").upper().strip()
+ticker = st.text_input("Enter Ticker", value="SPX").upper().strip()
 
-st.caption(f"📥 Get CSV here → [CBOE {ticker} Delayed Quotes](https://www.cboe.com/delayed_quotes/{ticker.lower()}/quote_table/)")
+st.caption(f"📥 CBOE Link → [Open {ticker} Page](https://www.cboe.com/delayed_quotes/{ticker.lower()}/quote_table/)")
 
-# File uploader
-uploaded_file = st.file_uploader(f"Upload today's {ticker}_quotedata.csv from CBOE", type=["csv"])
+uploaded_file = st.file_uploader(f"Upload {ticker} CSV from CBOE", type=["csv"])
 
 if uploaded_file is not None:
-    # Load the file and show columns for debugging
     df = pd.read_csv(uploaded_file, skiprows=2)
     
     st.write("**Columns found in CSV:**", list(df.columns))
     
-    # Robust Strike column detection
-    strike_col = None
-    for col in df.columns:
-        if 'strike' in col.lower():
-            strike_col = col
-            break
-    
+    # === SUPER ROBUST COLUMN DETECTION ===
+    # Standardize Strike column
+    strike_col = next((col for col in df.columns if 'strike' in col.lower()), None)
     if not strike_col:
-        st.error("❌ Could not find a 'Strike' column. Please check the columns above and tell me what the strike column is called.")
+        st.error("Could not find Strike column. Make sure you downloaded the full options chain.")
         st.stop()
-    
     df = df.dropna(subset=[strike_col])
-    df = df.rename(columns={strike_col: 'Strike'})  # standardize it
+    df = df.rename(columns={strike_col: 'Strike'})
 
     # Current price
     current_price = st.number_input("Current Price", value=7412.84, step=0.01)
 
-    # === Flexible Column Detection for Gamma and Open Interest ===
+    # Try multiple possible column name patterns
     call_gamma_col = None
     put_gamma_col = None
     call_oi_col = None
     put_oi_col = None
 
-    # SPX style
-    if 'Gamma' in df.columns and 'Gamma.1' in df.columns:
+    cols = [c.lower() for c in df.columns]
+
+    # Pattern 1: SPX style (Gamma / Gamma.1)
+    if 'gamma' in cols and 'gamma.1' in cols:
         call_gamma_col = 'Gamma'
         put_gamma_col = 'Gamma.1'
         call_oi_col = 'Open Interest'
         put_oi_col = 'Open Interest.1'
-    # Other common patterns
-    elif 'Call Gamma' in df.columns and 'Put Gamma' in df.columns:
-        call_gamma_col = 'Call Gamma'
-        put_gamma_col = 'Put Gamma'
-        call_oi_col = 'Call Open Interest'
-        put_oi_col = 'Put Open Interest'
+
+    # Pattern 2: Stock/ETF style (Call Gamma / Put Gamma)
+    elif any('call gamma' in c for c in df.columns) and any('put gamma' in c for c in df.columns):
+        call_gamma_col = next(c for c in df.columns if 'call gamma' in c.lower())
+        put_gamma_col = next(c for c in df.columns if 'put gamma' in c.lower())
+        call_oi_col = next(c for c in df.columns if 'call open interest' in c.lower())
+        put_oi_col = next(c for c in df.columns if 'put open interest' in c.lower())
+
+    # Pattern 3: Fallback broad search
     else:
-        # Fallback search
         for col in df.columns:
-            col_lower = col.lower()
-            if 'gamma' in col_lower and 'call' in col_lower:
+            cl = col.lower()
+            if 'gamma' in cl and 'call' in cl:
                 call_gamma_col = col
-            elif 'gamma' in col_lower and 'put' in col_lower:
+            elif 'gamma' in cl and 'put' in cl:
                 put_gamma_col = col
-            elif 'open interest' in col_lower and 'call' in col_lower:
+            elif 'open interest' in cl and 'call' in cl:
                 call_oi_col = col
-            elif 'open interest' in col_lower and 'put' in col_lower:
+            elif 'open interest' in cl and 'put' in cl:
                 put_oi_col = col
 
     if not call_gamma_col or not put_gamma_col:
-        st.error("Could not auto-detect Gamma columns. Please reply with the column names shown above.")
+        st.error("Could not detect Gamma columns. Please reply with the 'Columns found' list above.")
         st.stop()
 
     # Calculate GEX
@@ -92,7 +88,7 @@ if uploaded_file is not None:
 
     # Display
     col1, col2, col3 = st.columns(3)
-    col1.metric("Net GEX", f"${net_gex:,.2f}B",
+    col1.metric("Net GEX", f"${net_gex:,.2f}B", 
                 delta="Positive = Stabilizing" if net_gex > 0 else "Negative = Volatile")
     col2.metric("Gamma Flip", f"{gamma_flip:.0f}")
     col3.metric("Current Price", f"{current_price:.2f}")
@@ -110,8 +106,6 @@ if uploaded_file is not None:
     plt.grid(True, alpha=0.3)
     st.pyplot(fig)
 
-    st.success(f"✅ {ticker} GEX loaded!")
+    st.success(f"✅ {ticker} loaded successfully!")
 else:
-    st.info("👆 Upload the latest CSV for the ticker above")
-
-st.caption("Daily update: Go to the CBOE link above → Download CSV → Upload here")
+    st.info("Upload your CSV above")

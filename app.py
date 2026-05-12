@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from datetime import datetime
 
 st.set_page_config(page_title="My GEX Dashboard", layout="wide")
 st.title("🚀 My Personal GEX Dashboard")
@@ -17,45 +16,61 @@ st.caption(f"📥 Get CSV here → [CBOE {ticker} Delayed Quotes](https://www.cb
 uploaded_file = st.file_uploader(f"Upload today's {ticker}_quotedata.csv from CBOE", type=["csv"])
 
 if uploaded_file is not None:
+    # Load the file and show columns for debugging
     df = pd.read_csv(uploaded_file, skiprows=2)
-    df = df.dropna(subset=['Strike'])
+    
+    st.write("**Columns found in CSV:**", list(df.columns))
+    
+    # Robust Strike column detection
+    strike_col = None
+    for col in df.columns:
+        if 'strike' in col.lower():
+            strike_col = col
+            break
+    
+    if not strike_col:
+        st.error("❌ Could not find a 'Strike' column. Please check the columns above and tell me what the strike column is called.")
+        st.stop()
+    
+    df = df.dropna(subset=[strike_col])
+    df = df.rename(columns={strike_col: 'Strike'})  # standardize it
 
-    # Current SPX / underlying price
+    # Current price
     current_price = st.number_input("Current Price", value=7412.84, step=0.01)
 
-    # === Flexible Column Detection (works for SPX + most stocks/ETFs) ===
+    # === Flexible Column Detection for Gamma and Open Interest ===
     call_gamma_col = None
     put_gamma_col = None
     call_oi_col = None
     put_oi_col = None
 
-    # SPX-style columns (what you currently have)
+    # SPX style
     if 'Gamma' in df.columns and 'Gamma.1' in df.columns:
         call_gamma_col = 'Gamma'
         put_gamma_col = 'Gamma.1'
         call_oi_col = 'Open Interest'
         put_oi_col = 'Open Interest.1'
-    # Alternative common column names
+    # Other common patterns
     elif 'Call Gamma' in df.columns and 'Put Gamma' in df.columns:
         call_gamma_col = 'Call Gamma'
         put_gamma_col = 'Put Gamma'
         call_oi_col = 'Call Open Interest'
         put_oi_col = 'Put Open Interest'
-    # Fallback search
     else:
+        # Fallback search
         for col in df.columns:
-            if 'gamma' in col.lower() and 'call' in col.lower():
+            col_lower = col.lower()
+            if 'gamma' in col_lower and 'call' in col_lower:
                 call_gamma_col = col
-            elif 'gamma' in col.lower() and 'put' in col.lower():
+            elif 'gamma' in col_lower and 'put' in col_lower:
                 put_gamma_col = col
-            elif 'open interest' in col.lower() and 'call' in col.lower():
+            elif 'open interest' in col_lower and 'call' in col_lower:
                 call_oi_col = col
-            elif 'open interest' in col.lower() and 'put' in col.lower():
+            elif 'open interest' in col_lower and 'put' in col_lower:
                 put_oi_col = col
 
     if not call_gamma_col or not put_gamma_col:
-        st.error("Could not find Gamma columns. Please tell me the column names printed below:")
-        st.write("Columns in your CSV:", list(df.columns))
+        st.error("Could not auto-detect Gamma columns. Please reply with the column names shown above.")
         st.stop()
 
     # Calculate GEX
@@ -75,7 +90,7 @@ if uploaded_file is not None:
     else:
         gamma_flip = float(sorted_gex.idxmin() if sorted_gex.min() < 0 else sorted_gex.idxmax())
 
-    # Display metrics
+    # Display
     col1, col2, col3 = st.columns(3)
     col1.metric("Net GEX", f"${net_gex:,.2f}B",
                 delta="Positive = Stabilizing" if net_gex > 0 else "Negative = Volatile")
@@ -95,7 +110,7 @@ if uploaded_file is not None:
     plt.grid(True, alpha=0.3)
     st.pyplot(fig)
 
-    st.success(f"✅ {ticker} GEX loaded successfully!")
+    st.success(f"✅ {ticker} GEX loaded!")
 else:
     st.info("👆 Upload the latest CSV for the ticker above")
 

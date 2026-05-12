@@ -42,6 +42,8 @@ if st.button("📊 Load from FlashAlpha", type="primary"):
             if isinstance(gex_by_strike, list):
                 gex_dict = {item['strike']: item['net_gex'] for item in gex_by_strike}
                 gex_by_strike = pd.Series(gex_dict)
+            elif isinstance(gex_by_strike, dict):
+                gex_by_strike = pd.Series(gex_by_strike)
             
             # Display FlashAlpha Results
             st.markdown("### 🔌 FlashAlpha Results")

@@ -36,23 +36,22 @@ if uploaded_file is not None:
     df = df.dropna(subset=[strike_col])
     df = df.rename(columns={strike_col: 'Strike'})
 
-    # === AUTO PRICE FETCH ===
+    # Auto-fetch price
     col_price1, col_price2 = st.columns([3, 1])
     with col_price1:
-        current_price = st.number_input("Current Price", value=739.24, step=0.01)
+        current_price = st.number_input("Current Price", value=117.35, step=0.01)
     with col_price2:
-        if st.button("🔄 Get Latest Price", help="Pulls latest price using yfinance"):
+        if st.button("🔄 Get Latest Price"):
             with st.spinner("Fetching price..."):
                 try:
-                    # Try normal ticker, fallback for SPX
                     t = yf.Ticker(ticker if ticker != "SPX" else "^GSPC")
                     price = t.info.get('regularMarketPrice') or t.info.get('currentPrice') or t.history(period="1d")['Close'].iloc[-1]
                     current_price = float(price)
                     st.success(f"✅ Updated to ${current_price:.2f}")
                 except Exception:
-                    st.warning("Could not fetch price automatically. Enter manually.")
+                    st.warning("Could not fetch price automatically.")
 
-    # Column detection (same as before)
+    # Column detection
     call_gamma_col = next((col for col in df.columns if 'gamma' in str(col).lower() and ('call' in str(col).lower() or col == 'Gamma')), None)
     put_gamma_col = next((col for col in df.columns if 'gamma' in str(col).lower() and ('put' in str(col).lower() or col == 'Gamma.1')), None)
     call_oi_col = next((col for col in df.columns if 'open interest' in str(col).lower() and ('call' in str(col).lower() or col == 'Open Interest')), None)
@@ -73,23 +72,39 @@ if uploaded_file is not None:
     call_wall = gex_by_strike[gex_by_strike > 0].idxmax() if any(gex_by_strike > 0) else None
     put_wall = gex_by_strike[gex_by_strike < 0].idxmin() if any(gex_by_strike < 0) else None
 
+    # === FIXED: Gamma Flip closest to current price ===
     sorted_gex = gex_by_strike.sort_index()
     sign_change = np.where(np.diff(np.sign(sorted_gex)))[0]
+    
     if len(sign_change) > 0:
-        idx = sign_change[0]
-        gamma_flip = float(sorted_gex.index[idx] + (sorted_gex.index[idx+1] - sorted_gex.index[idx]) * 
-                         (-sorted_gex.iloc[idx] / (sorted_gex.iloc[idx+1] - sorted_gex.iloc[idx])))
+        # Find ALL crossing points
+        crossing_strikes = []
+        for idx in sign_change:
+            # Linear interpolation for more accuracy
+            x1, x2 = sorted_gex.index[idx], sorted_gex.index[idx+1]
+            y1, y2 = sorted_gex.iloc[idx], sorted_gex.iloc[idx+1]
+            if y2 != y1:
+                crossing = x1 + (x2 - x1) * (-y1 / (y2 - y1))
+                crossing_strikes.append(crossing)
+        
+        if crossing_strikes:
+            # Pick the crossing CLOSEST to current price
+            gamma_flip = min(crossing_strikes, key=lambda x: abs(x - current_price))
+        else:
+            gamma_flip = sorted_gex.index[sign_change[0]]
     else:
-        gamma_flip = float(sorted_gex.idxmin() if sorted_gex.min() < 0 else sorted_gex.idxmax())
+        # No sign change - find strike with GEX closest to zero
+        gamma_flip = sorted_gex.index[np.argmin(np.abs(sorted_gex.values))]
 
     # Metrics
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Net GEX", f"${net_gex:,.2f}B", delta="Positive = Stabilizing" if net_gex > 0 else "Negative = Volatile")
+    col1.metric("Net GEX", f"${net_gex:,.2f}B", 
+                delta="Positive = Stabilizing" if net_gex > 0 else "Negative = Volatile")
     col2.metric("Call Wall", f"{call_wall:.0f}" if call_wall else "N/A")
     col3.metric("Put Wall", f"{put_wall:.0f}" if put_wall else "N/A")
     col4.metric("Gamma Flip", f"{gamma_flip:.0f}")
 
-    # Clean Plotly Chart
+    # Plotly Chart
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=gex_by_strike.index,

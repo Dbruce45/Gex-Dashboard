@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from io import StringIO
 
 st.set_page_config(page_title="My GEX Dashboard", layout="wide")
 st.title("🚀 My Personal GEX Dashboard")
-st.markdown("**Now supports SPX + SPY + QQQ + stocks**")
+st.markdown("**Supports SPX + SPY + other tickers**")
 
 ticker = st.text_input("Enter Ticker", value="SPX").upper().strip()
 
@@ -14,34 +15,41 @@ st.caption(f"📥 CBOE Link → [Open {ticker} Page](https://www.cboe.com/delaye
 uploaded_file = st.file_uploader(f"Upload {ticker} CSV from CBOE", type=["csv"])
 
 if uploaded_file is not None:
-    # === AUTO-DETECT CORRECT HEADER ROW ===
-    df = None
+    # Read the entire file as text to find the correct header row
+    content = uploaded_file.getvalue().decode("utf-8")
+    lines = content.splitlines()
+    
+    # Find the row that contains "Strike" (the real header)
     header_row = None
-    
-    for skip in range(0, 10):  # try up to 10 rows
-        temp = pd.read_csv(uploaded_file, skiprows=skip, nrows=5)
-        if 'Strike' in temp.columns or any('strike' in str(col).lower() for col in temp.columns):
-            header_row = skip
-            uploaded_file.seek(0)  # reset file pointer
-            df = pd.read_csv(uploaded_file, skiprows=header_row)
+    for i, line in enumerate(lines):
+        if "Strike" in line:
+            header_row = i
             break
-        uploaded_file.seek(0)
     
-    if df is None:
-        st.error("Could not find the options table. Please make sure you downloaded the full chain.")
+    if header_row is None:
+        st.error("Could not find 'Strike' column. Make sure you downloaded the full options chain.")
         st.stop()
-
-    st.write(f"**Detected header at row {header_row}**")
+    
+    st.write(f"✅ Detected data table starting at row {header_row}")
+    
+    # Read the CSV starting from the correct header row
+    uploaded_file.seek(0)
+    df = pd.read_csv(uploaded_file, skiprows=header_row, on_bad_lines='skip')
+    
     st.write("**Columns found:**", list(df.columns))
-
+    
     # Standardize Strike column
     strike_col = next((col for col in df.columns if 'strike' in str(col).lower()), None)
+    if not strike_col:
+        st.error("Could not find Strike column")
+        st.stop()
+    
     df = df.dropna(subset=[strike_col])
     df = df.rename(columns={strike_col: 'Strike'})
 
-    current_price = st.number_input("Current Price", value=739.24, step=0.01)   # default to SPY price from your screenshot
+    current_price = st.number_input("Current Price", value=739.24, step=0.01)
 
-    # Flexible Gamma & Open Interest detection
+    # Robust column detection for Gamma and Open Interest
     call_gamma_col = next((col for col in df.columns if 'gamma' in str(col).lower() and ('call' in str(col).lower() or col == 'Gamma')), None)
     put_gamma_col = next((col for col in df.columns if 'gamma' in str(col).lower() and ('put' in str(col).lower() or col == 'Gamma.1')), None)
     call_oi_col = next((col for col in df.columns if 'open interest' in str(col).lower() and ('call' in str(col).lower() or col == 'Open Interest')), None)

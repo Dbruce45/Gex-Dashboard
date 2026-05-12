@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import numpy as np
 from io import StringIO
 
 st.set_page_config(page_title="My GEX Dashboard", layout="wide")
@@ -14,7 +15,7 @@ st.caption(f"📥 [CBOE {ticker} Page](https://www.cboe.com/delayed_quotes/{tick
 uploaded_file = st.file_uploader(f"Upload {ticker} CSV from CBOE", type=["csv"])
 
 if uploaded_file is not None:
-    # Auto-detect header row (works for SPX + SPY + most others)
+    # Auto-detect header row
     content = uploaded_file.getvalue().decode("utf-8")
     lines = content.splitlines()
     
@@ -57,7 +58,7 @@ if uploaded_file is not None:
     # GEX by strike
     gex_by_strike = df.groupby('Strike')[['Call_GEX', 'Put_GEX']].sum().sum(axis=1)
 
-    # === NEW: Call Wall & Put Wall ===
+    # Call Wall & Put Wall
     call_wall = gex_by_strike[gex_by_strike > 0].idxmax() if any(gex_by_strike > 0) else None
     put_wall = gex_by_strike[gex_by_strike < 0].idxmin() if any(gex_by_strike < 0) else None
 
@@ -79,7 +80,7 @@ if uploaded_file is not None:
     col3.metric("Put Wall", f"{put_wall:.0f}" if put_wall else "N/A")
     col4.metric("Gamma Flip", f"{gamma_flip:.0f}")
 
-    # === CLEANER PLOTLY CHART ===
+    # Modern Plotly Chart
     fig = go.Figure()
 
     fig.add_trace(go.Bar(
@@ -114,6 +115,6 @@ if uploaded_file is not None:
 
     st.plotly_chart(fig, use_container_width=True)
 
-    st.success(f"✅ {ticker} GEX loaded successfully!")
+    st.success(f"✅ {ticker} loaded successfully!")
 else:
     st.info("Upload your CSV above to see Call Wall, Put Wall, and clean chart")
